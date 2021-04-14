@@ -2,15 +2,18 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define SLAVE_ADDR  0x38
+#define SLAVE_ADDR          0x48
 #define MAX_BUFFER_SIZE     20
-#define TYPE_1_LENGTH   2
-#define dataCommand               0xAC
+#define TYPE_1_LENGTH       2
+#define dataCommand         0xAC
+#define Reset               0xba
+#define initAHT10           0xe1
 
 float Temp;
 int X0, X1;
 int X_out;
 float Xtemp, Yhum ;
+bool flg = 1;
 
 uint16_t temp_and_hum[6] = {0};
 uint32_t AHT10_ADC_Raw;
@@ -53,7 +56,7 @@ int main(void)
 */
         /* humidity calculation */
       /*  humCalc();*/
-        _delay_cycles(700);
+      //  _delay_cycles(700);
   /*      temp_and_hum[2]  = Yhum;
         Yhum = Yhum - (float)temp_and_hum[2];
         temp_and_hum[3]  = (Yhum * 100);
@@ -63,11 +66,30 @@ int main(void)
         temp_and_hum[6] = 2;
         temp_and_hum[7] = 0;*/
 
-        _delay_cycles(100);
+     //   _delay_cycles(100);
     }
 
     return 0;
 }
+
+void mcu_init() {
+
+    // Configure clock
+    __bis_SR_register(SCG0);                        // disable FLL
+    CSCTL3 |= SELREF__REFOCLK;                      // Set REFO as FLL reference source
+    CSCTL0 = 0;                                     // clear DCO and MOD registers
+    CSCTL1 &= ~(DCORSEL_7);                         // Clear DCO frequency select bits first
+    CSCTL1 |= DCORSEL_3;                            // Set DCO = 8MHz
+    CSCTL2 = FLLD_0 + 243;                           // DCODIV = 16MHz
+    __delay_cycles(3);
+    __bic_SR_register(SCG0);                        // enable FLL
+    while(CSCTL7 & (FLLUNLOCK0 | FLLUNLOCK1));      // Poll until FLL is locked
+
+    CSCTL4 |= SELMS__DCOCLKDIV | SELA__REFOCLK;     // set default REFO(~32768Hz) as ACLK source, ACLK = 32768Hz
+                                                    // default DCODIV as MCLK and SMCLK source
+//    CSCTL5 |= DIVM__1 | DIVS__2;                    // SMCLK = 1MHz, MCLK = 2MHz
+}
+
 
 void init_i2c(void)
 {
@@ -75,11 +97,12 @@ void init_i2c(void)
     P5DIR = 0xFF;
     P5SEL0 |= BIT2 | BIT3;
 
+
     UCB0CTLW0 = UCSWRST;                                    // Enable SW reset
     UCB0CTLW0 |= UCMODE_3 | UCMST | UCSSEL__SMCLK | UCSYNC; // I2C master mode, SMCLK
-    UCB0BRW = 160;                                           // fSCL = SMCLK/80 = ~100kHz
+    UCB0BRW = 10;                                           // fSCL = SMCLK/80 = ~100kHz
     UCB0TBCNT = 0x0002;
-    UCB0I2CSA = 0x38;                                       // Slave Address
+    UCB0I2CSA = 0x48;                                       // Slave Address
     UCB0CTLW0 |= UCTXSTT;                                   // Transmit START
     UCB0CTLW0 &= ~UCSWRST;                                  // Clear SW reset, resume operation
     UCB0CTLW1 |= UCASTP_2;   //// Automatic stop generated
@@ -108,15 +131,19 @@ void calcTempHum(void)
     while(UCB0IV & USCI_I2C_UCNACKIFG);
     UCB0CTLW0 |= UCTR | UCTXSTT;
 
-    UCB0TBCNT = 0x0001;  // we want to 2 byte data to send
-    UCB0I2CSA = 0x38;    // the slave address
+    UCB0TBCNT = 0x0002;  // we want to 2 byte data to send
+    UCB0I2CSA = 0x48;    // the slave address
 
 // Temperature calculation is started
- //   i2c_write(0xe1);  // start temperature measurement
-    __delay_cycles(30000);
+    if (flg == 1) {
+    i2c_write(0xe1);  // start temperature measurement
+    __delay_cycles(1600000);
+    flg = 0;
+    }
+    //__delay_cycles(1600000);
 
     i2c_write(dataCommand);  // start temperature measurement
-    __delay_cycles(30000);
+    __delay_cycles(1600000);
     /*int i = 0;
     for(i = 0; i++; i<6) {
         temp_and_hum[i++] = i2c_read();
@@ -142,26 +169,11 @@ void calcTempHum(void)
     while (UCB0CTL1 & UCTXSTP);                 // Ensure stop condition got sent
     UCB0CTL1 |= UCTXSTT;
 
+ //   i2c_write(Reset);  // start temperature measurement
+ //   __delay_cycles(30000);
 }
 
 
-void mcu_init() {
-
-    // Configure clock
-    __bis_SR_register(SCG0);                        // disable FLL
-    CSCTL3 |= SELREF__REFOCLK;                      // Set REFO as FLL reference source
-    CSCTL0 = 0;                                     // clear DCO and MOD registers
-    CSCTL1 &= ~(DCORSEL_7);                         // Clear DCO frequency select bits first
-    CSCTL1 |= DCORSEL_5;                            // Set DCO = 16MHz
-    CSCTL2 = FLLD_0 + 487;                           // DCODIV = 16MHz
-    __delay_cycles(3);
-    __bic_SR_register(SCG0);                        // enable FLL
-    while(CSCTL7 & (FLLUNLOCK0 | FLLUNLOCK1));      // Poll until FLL is locked
-
- //   CSCTL4 |= SELMS__DCOCLKDIV | SELA__REFOCLK;     // set default REFO(~32768Hz) as ACLK source, ACLK = 32768Hz
-                                                    // default DCODIV as MCLK and SMCLK source
-//    CSCTL5 |= DIVM__1 | DIVS__2;                    // SMCLK = 1MHz, MCLK = 2MHz
-}
 
 
 /* void humCalc(void)
